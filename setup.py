@@ -8,7 +8,7 @@ classifiers = [
 
 setup(
     name='trade_manager',
-    version='0.0.1',
+    version='0.0.4',
     packages=['trade_manager'],
     url='https://github.com/gitguild/trade-manager',
     license='MIT',
@@ -19,15 +19,21 @@ setup(
     setup_requires=['pytest-runner'],
     install_requires=[
         'sqlalchemy>=1.0.9',
-        'hashlib'#,
-        #'secp256k1==0.11'#,
-        #"bitjws==0.6.3.1",
-        #"flask>=0.10.0",
-        #"flask-login",
-        #"flask-cors",
-        #"flask-bitjws>=0.1.1.4",
-        #"alchemyjsonschema"
+        'hashlib', 'jsonschema',
+        'alchemyjsonschema',
+        'redis',
+        'python-daemon'
+        # 'secp256k1==0.11'#,
+        # "bitjws==0.6.3.1",
+        # "flask>=0.10.0",
+        # "flask-login",
+        # "flask-cors",
+        # "flask-bitjws>=0.1.1.4",
     ],
     tests_require=['pytest', 'pytest-cov'],
-    extras_require={"build": ["flask-swagger"]}
+    extras_require={"build": ["flask-swagger"]},
+    entry_points="""
+[console_scripts]
+tradem = trade_manager.cli:handle_command
+"""
 )

@@ -2,33 +2,59 @@
 
 A program for managing cryptocurrency trading on a variety of exchanges.
 
-# Installation
+## Installation
 
-### Pre-requisites
+Just run `make install`. This will automatically install all prereqs
+including ledger-cli and sepc256k1.
 
-By default it's expected that [secp256k1](https://github.com/bitcoin/secp256k1) is available, so install it before proceeding; make sure to run `./configure --enable-module-recovery`. If you're using some other library that provides the functionality necessary for this, check the __Using a custom library__ section below.
+Also make will create a data directory for storing your logs and
+configuration files. On *nux systems, this directory will be
+`~/.tapp/trademanager`
 
-bitjws can be installed by running `pip install bitjws`.
+If and when you wish to change any configuration settings, edit
+the .ini file in the data directory.
 
-##### Building secp256k1
+## Command Line Interface (CLI)
 
-In case you need to install the `secp256k1` C library, the following sequence of commands is recommended. If you already have `secp256k1`, make sure it was compiled from the expected git commit or it might fail to work due to API incompatibilities.
+The trade-manager comes with a CLI for managing all of your exchanges
+via the command line. The name of the trade-manager cli is 'tradem' 
 
+``` bash
+$ tradem
+usage: tradem {ticker,ledger,order,trade,balance,address}
+
+positional arguments:
+  {ticker,ledger,order,trade,balance,address}
+                        'tradem <command> help' for usage details
 ```
-git clone git://github.com/bitcoin/secp256k1.git libsecp256k1
-cd libsecp256k1
-git checkout d7eb1ae96dfe9d497a26b3e7ff8b6f58e61e400a
-./autogen.sh
-./configure --enable-module-recovery --enable-module-ecdh --enable-module-schnorr
-make
-make install
+
+All basic features are available.
+For instance, you can create, cancel, and get orders.
+
+``` bash
+$ tradem order create --help
+usage: tradem [-h]
+              {ticker,ledger,order,trade,balance,address}
+              {get,sync,create,cancel} {bid,ask} amount price market exchange
+
+positional arguments:
+  {ticker,ledger,order,trade,balance,address}
+                        'tradem <command> help' for usage details
+  {get,sync,create,cancel}
+                        Order sub-commands
+  {bid,ask}             The order side
+  amount                The order amount
+  price                 The order price
+  market                The order market
+  exchange              The order exchange
+
+optional arguments:
+  -h, --help            show this help message and exit
 ```
 
-Additionally, you may need to set some environmental variables, pointing to the installation above.
+That said, the responses are still ugly.
 
+``` bash
+tradem order get -e test
+[<LimitOrder(price=100.00000000 USD, amount=0.10000000 BTC, exec_amount=0.00000000 BTC, market='BTC_USD', side='bid', exchange='test', order_id='test|7SdSiSfC2UsfcTi', state='closed', create_time=2016/07/27 10:21:23)>]
 ```
-INCLUDE_DIR=$(readlink -f ./libsecp256k1/include)
-LIB_DIR=$(readlink -f ./libsecp256k1/.libs)
-python setup.py -q install
-
-LD_LIBRARY_PATH=$(readlink -f ./libsecp256k1/.libs)
