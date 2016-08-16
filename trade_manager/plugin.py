@@ -17,19 +17,6 @@ from trade_manager import em, um, wm, ses, EXCHANGES
 red = setup_redis()
 
 
-def get_order_by_order_id(order_id, exchange, session=None):
-    if session is None:
-        session = ses
-    if "|" in order_id:
-        order_id = order_id.split("|")[1]
-    order = session.query(em.LimitOrder)\
-        .filter(em.LimitOrder.order_id == "%s|%s" % (exchange.lower(), order_id)).one_or_none()
-    if order is None:
-        order = session.query(em.LimitOrder).filter(
-            em.LimitOrder.order_id == "tmp|%s" % order_id).one_or_none()
-    return order
-
-
 class ExchangePluginBase(MQHandlerBase):
     """
     A parent class for Exchange Manager Plugins.
@@ -318,6 +305,21 @@ def add_active_markets(exchange, markets):
     red.set('%s_active_markets' % exchange, active_markets)
 
 
+def rem_active_market(exchange, market):
+    rem_active_markets(exchange, [market])
+
+
+def rem_active_markets(exchange, markets):
+    active_markets = get_active_markets(exchange)
+    for mark in markets:
+        try:
+            active_markets.remove(mark)
+        except ValueError:
+            # safe to ignore; market was already inactive
+            continue
+    red.set('%s_active_markets' % exchange, active_markets)
+
+
 def get_active_markets(exchange):
     active_markets = red.get('%s_active_markets' % exchange)
     if active_markets is not None and len(active_markets) > 2:  # is not "[]"
@@ -348,65 +350,6 @@ def get_commodity_config(commodity):
         return detail
 
 
-def get_usd_value(amount, price=None):
-    if not isinstance(amount, Amount):
-        raise TypeError("requires an Amount argument")
-    comm = str(amount.commodity)
-    if comm == 'USD':
-        return amount
-    elif comm != '':
-        if price is None:
-            ticker = get_ticker(market="%s_USD" % comm, red=red)
-            if ticker is None:
-                raise TypeError("inactive commodity %s" % comm)
-            else:
-                price = ticker.calculate_index()
-        return Amount("%s USD" % amount.number()) * price
-
-
-def get_weighted_usd_volume(ticker):
-    if isinstance(ticker, dict):
-        ticker = em.Ticker.from_dict(ticker)
-    if isinstance(ticker, str):
-        ticker = em.Ticker.from_json(ticker)
-    base = str(ticker.volume.commodity)
-    quote = str(ticker.last.commodity)
-    base_comm_cfg = get_commodity_config(base)
-    quote_comm_cfg = get_commodity_config(quote)
-    weight = Amount("%s USD" % base_comm_cfg['weight']) * Amount("%s USD" % quote_comm_cfg['weight'])
-    if 'USD' in base:  # flexible for USDT, but is this a potential conflict?
-        return weight * Amount("%s USD" % ticker.volume.number())
-    elif 'USD' in quote:  # flexible for USDT, but is this a potential conflict?
-        return weight * Amount("%s USD" % ticker.volume.number()) * ticker.calculate_index()
-    else:
-        usdprice = get_usd_value(Amount("1 %s" % base))
-        return Amount("%s USD" % usdprice.number()) * Amount("%s USD" % ticker.volume.number()) * weight
-
-
-def get_market_vol_shares(exchange, c=None):
-    vols = {'total': Amount("0 USD")}
-
-    for market in get_active_markets(exchange):
-        if c is None:
-            tick = get_ticker(exchange, market.upper())
-            vols[market] = {'USD_volume': get_weighted_usd_volume(tick), 'ticker': tick}
-            vols['total'] += vols[market]['USD_volume']
-        elif c.upper() in market.upper():
-            tick = get_ticker(exchange, market.upper())
-            # pair = market.split("_")
-            uvol = get_weighted_usd_volume(tick)
-            vols[market] = {'USD_volume': uvol, 'ticker': tick}
-            vols['total'] += vols[market]['USD_volume']
-    for market in vols:
-        if market == 'total':
-            continue
-        if vols['total'] > 0:
-            vols[market]['vol_share'] = (vols[market]['USD_volume'] / vols['total']).to_double()
-        else:
-            vols[market]['vol_share'] = 0
-    return vols
-
-
 def get_ticker(exchange=None, market="BTC_USD", red=None):
     if red is None:
         red = setup_redis()
@@ -433,99 +376,6 @@ def get_ticker(exchange=None, market="BTC_USD", red=None):
         return safe_get_ticker(exch, market, red)
     else:
         return safe_get_ticker(exchange.lower(), market, red)
-
-
-def get_trades(exchange=None, market=None, tid=None, trade_id=None, session=None):
-    if session is None:
-        session, eng = create_session_engine()
-    query = session.query(em.Trade)
-    if trade_id is not None:
-        trade_id = trade_id if "|" in str(trade_id) else '%s|%s' % (exchange.lower(), trade_id)
-    query = filter_query_by_attr(query, em.Trade, 'trade_id', trade_id)
-    query = filter_query_by_attr(query, em.Trade, 'exchange', exchange)
-    query = filter_query_by_attr(query, em.Trade, 'market', market)
-    query = filter_query_by_attr(query, em.Trade, 'id', tid)
-    resp = []
-    for trade in query:
-        resp.append(trade)
-    return resp
-
-
-def get_credits(exchange=None, address=None, currency=None, ref_id=None, session=None):
-    if session is None:
-        session, eng = create_session_engine()
-    query = session.query(wm.Credit)
-    query = filter_query_by_attr(query, wm.Credit, 'ref_id', ref_id)
-    query = filter_query_by_attr(query, wm.Credit, 'network', exchange)
-    query = filter_query_by_attr(query, wm.Credit, 'address', address)
-    query = filter_query_by_attr(query, wm.Credit, 'currency', currency)
-    resp = []
-    for cred in query:
-        resp.append(cred)
-    return resp
-
-
-def get_debits(exchange=None, address=None, currency=None, ref_id=None, session=None):
-    if session is None:
-        session, eng = create_session_engine()
-    query = session.query(wm.Debit)
-    query = filter_query_by_attr(query, wm.Debit, 'ref_id', ref_id)
-    query = filter_query_by_attr(query, wm.Debit, 'network', exchange)
-    query = filter_query_by_attr(query, wm.Debit, 'address', address)
-    query = filter_query_by_attr(query, wm.Debit, 'currency', currency)
-    resp = []
-    for deb in query:
-        resp.append(deb)
-    return resp
-
-
-def get_orders(exchange=None, market=None, side=None, oid=None, order_id=None, state=None, session=None):
-    if session is None:
-        session, eng = create_session_engine()
-    query = session.query(em.LimitOrder)
-    if order_id is not None:
-        order_id = order_id if "|" in str(order_id) else '%s|%s' % (exchange.lower(), order_id)
-    query = filter_query_by_attr(query, em.LimitOrder, 'order_id', order_id)
-    query = filter_query_by_attr(query, em.LimitOrder, 'market', market)
-    query = filter_query_by_attr(query, em.LimitOrder, 'side', side)
-    query = filter_query_by_attr(query, em.LimitOrder, 'exchange', exchange)
-    query = filter_query_by_attr(query, em.LimitOrder, 'id', oid)
-    query = filter_query_by_attr(query, em.LimitOrder, 'state', state)
-    resp = []
-    for order in query:
-        resp.append(order)
-    return resp
-
-
-def get_balances(exchange=None, currency=None, session=None):
-    if session is None:
-        session, eng = create_session_engine()
-    query = session.query(wm.Balance)
-    if currency is not None:
-        query = filter_query_by_attr(query, wm.Balance, 'currency', currency)
-    if exchange is not None:
-        query = query.join(um.User).filter(um.User.username == "%sManager" % exchange.lower())
-    total = Balance()
-    available = Balance()
-    for bal in query:
-        total = total + bal.total
-        available = available + bal.available
-    return total, available
-
-
-def create_order(exchange, price, amount, market, side, session, submit=True, expire=None):
-    order = em.LimitOrder(price, amount, market, side, exchange.lower())
-    session.add(order)
-    try:
-        session.commit()
-    except Exception as e:
-        print e
-        session.rollback()
-        session.flush()
-    order.load_commodities()
-    if submit:
-        submit_order(exchange, order.id, expire=expire)
-    return order
 
 
 def submit_order(exchange, oid, expire=None):
@@ -590,6 +440,181 @@ def sync_credits(exchange, rescan=False):
 def sync_debits(exchange, rescan=False):
     data = {'rescan': rescan}
     publish(exchange, 'sync_debits', data)
+
+
+"""
+DB helpers
+"""
+
+
+def get_trades(exchange=None, market=None, tid=None, trade_id=None, session=None):
+    if session is None:
+        session, eng = create_session_engine()
+    query = session.query(em.Trade)
+    if trade_id is not None:
+        trade_id = trade_id if "|" in str(trade_id) else '%s|%s' % (exchange.lower(), trade_id)
+    query = filter_query_by_attr(query, em.Trade, 'trade_id', trade_id)
+    query = filter_query_by_attr(query, em.Trade, 'exchange', exchange)
+    query = filter_query_by_attr(query, em.Trade, 'market', market)
+    query = filter_query_by_attr(query, em.Trade, 'id', tid)
+    resp = []
+    for trade in query:
+        resp.append(trade)
+    return resp
+
+
+def get_credits(exchange=None, address=None, currency=None, ref_id=None, session=None):
+    if session is None:
+        session, eng = create_session_engine()
+    query = session.query(wm.Credit)
+    query = filter_query_by_attr(query, wm.Credit, 'ref_id', ref_id)
+    query = filter_query_by_attr(query, wm.Credit, 'network', exchange)
+    query = filter_query_by_attr(query, wm.Credit, 'address', address)
+    query = filter_query_by_attr(query, wm.Credit, 'currency', currency)
+    resp = []
+    for cred in query:
+        resp.append(cred)
+    return resp
+
+
+def get_debits(exchange=None, address=None, currency=None, ref_id=None, session=None):
+    if session is None:
+        session, eng = create_session_engine()
+    query = session.query(wm.Debit)
+    query = filter_query_by_attr(query, wm.Debit, 'ref_id', ref_id)
+    query = filter_query_by_attr(query, wm.Debit, 'network', exchange)
+    query = filter_query_by_attr(query, wm.Debit, 'address', address)
+    query = filter_query_by_attr(query, wm.Debit, 'currency', currency)
+    resp = []
+    for deb in query:
+        resp.append(deb)
+    return resp
+
+
+def get_orders(exchange=None, market=None, side=None, oid=None, order_id=None, state=None, session=None):
+    if session is None:
+        session, eng = create_session_engine()
+    query = session.query(em.LimitOrder)
+    if order_id is not None:
+        order_id = order_id if "|" in str(order_id) else '%s|%s' % (exchange.lower(), order_id)
+    query = filter_query_by_attr(query, em.LimitOrder, 'order_id', order_id)
+    query = filter_query_by_attr(query, em.LimitOrder, 'market', market)
+    query = filter_query_by_attr(query, em.LimitOrder, 'side', side)
+    query = filter_query_by_attr(query, em.LimitOrder, 'exchange', exchange)
+    query = filter_query_by_attr(query, em.LimitOrder, 'id', oid)
+    query = filter_query_by_attr(query, em.LimitOrder, 'state', state)
+    resp = []
+    for order in query:
+        resp.append(order)
+    return resp
+
+
+def get_order_by_order_id(order_id, exchange, session=None):
+    if session is None:
+        session = ses
+    if "|" in order_id:
+        order_id = order_id.split("|")[1]
+    order = session.query(em.LimitOrder)\
+        .filter(em.LimitOrder.order_id == "%s|%s" % (exchange.lower(), order_id)).one_or_none()
+    if order is None:
+        order = session.query(em.LimitOrder).filter(
+            em.LimitOrder.order_id == "tmp|%s" % order_id).one_or_none()
+    return order
+
+
+def get_balances(exchange=None, currency=None, session=None):
+    if session is None:
+        session, eng = create_session_engine()
+    query = session.query(wm.Balance)
+    if currency is not None:
+        query = filter_query_by_attr(query, wm.Balance, 'currency', currency)
+    if exchange is not None:
+        query = query.join(um.User).filter(um.User.username == "%sManager" % exchange.lower())
+    total = Balance()
+    available = Balance()
+    for bal in query:
+        total = total + bal.total
+        available = available + bal.available
+    return total, available
+
+
+def create_order(exchange, price, amount, market, side, session, submit=True, expire=None):
+    order = em.LimitOrder(price, amount, market, side, exchange.lower())
+    session.add(order)
+    try:
+        session.commit()
+    except Exception as e:
+        print e
+        session.rollback()
+        session.flush()
+    order.load_commodities()
+    if submit:
+        submit_order(exchange, order.id, expire=expire)
+    return order
+
+
+"""
+Math helpers
+"""
+
+
+def get_usd_value(amount, price=None):
+    if not isinstance(amount, Amount):
+        raise TypeError("requires an Amount argument")
+    comm = str(amount.commodity)
+    if comm == 'USD':
+        return amount
+    elif comm != '':
+        if price is None:
+            ticker = get_ticker(market="%s_USD" % comm, red=red)
+            if ticker is None:
+                raise TypeError("inactive commodity %s" % comm)
+            else:
+                price = ticker.calculate_index()
+        return Amount("%s USD" % amount.number()) * price
+
+
+def get_weighted_usd_volume(ticker):
+    if isinstance(ticker, dict):
+        ticker = em.Ticker.from_dict(ticker)
+    if isinstance(ticker, str):
+        ticker = em.Ticker.from_json(ticker)
+    base = str(ticker.volume.commodity)
+    quote = str(ticker.last.commodity)
+    base_comm_cfg = get_commodity_config(base)
+    quote_comm_cfg = get_commodity_config(quote)
+    weight = Amount("%s USD" % base_comm_cfg['weight']) * Amount("%s USD" % quote_comm_cfg['weight'])
+    if 'USD' in base:  # flexible for USDT, but is this a potential conflict?
+        return weight * Amount("%s USD" % ticker.volume.number())
+    elif 'USD' in quote:  # flexible for USDT, but is this a potential conflict?
+        return weight * Amount("%s USD" % ticker.volume.number()) * ticker.calculate_index()
+    else:
+        usdprice = get_usd_value(Amount("1 %s" % base))
+        return Amount("%s USD" % usdprice.number()) * Amount("%s USD" % ticker.volume.number()) * weight
+
+
+def get_market_vol_shares(exchange, c=None):
+    vols = {'total': Amount("0 USD")}
+
+    for market in get_active_markets(exchange):
+        if c is None:
+            tick = get_ticker(exchange, market.upper())
+            vols[market] = {'USD_volume': get_weighted_usd_volume(tick), 'ticker': tick}
+            vols['total'] += vols[market]['USD_volume']
+        elif c.upper() in market.upper():
+            tick = get_ticker(exchange, market.upper())
+            # pair = market.split("_")
+            uvol = get_weighted_usd_volume(tick)
+            vols[market] = {'USD_volume': uvol, 'ticker': tick}
+            vols['total'] += vols[market]['USD_volume']
+    for market in vols:
+        if market == 'total':
+            continue
+        if vols['total'] > 0:
+            vols[market]['vol_share'] = (vols[market]['USD_volume'] / vols['total']).to_double()
+        else:
+            vols[market]['vol_share'] = 0
+    return vols
 
 
 def make_ledger(exchange=None, session=ses):

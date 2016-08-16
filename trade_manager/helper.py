@@ -187,7 +187,7 @@ class TestPlugin(ExchangePluginBase):
         jtick = jsonify2(tick, 'Ticker')
         self.red.set('%s_%s_ticker' % (self.NAME.lower(), market), jtick)
 
-    def sync_trades(self):
+    def sync_trades(self, rescan=False):
         """
         :return: a list of trades, possibly only a subset of them.
         """
@@ -196,21 +196,21 @@ class TestPlugin(ExchangePluginBase):
         self.session.add(trade)
         self.session.commit()
 
-    def sync_credits(self):
+    def sync_credits(self, rescan=False):
         """
         :return: a list of credits, possibly only a subset of them.
         """
-        credit = wm.Credit(1, make_base_id(10), 'BTC', 'Bitcoin', 'unconfirmed', 'helper', make_base_id(10),
+        credit = wm.Credit(1, make_base_id(10), 'BTC', 'helper', 'unconfirmed', 'helper', make_base_id(10),
                            self.manager_user.id, time=datetime.datetime.utcnow())
         # self.logger.debug("credit: %s" % credit)
         self.session.add(credit)
         self.session.commit()
 
-    def sync_debits(self):
+    def sync_debits(self, rescan=False):
         """
         :return: a list of debits, possibly only a subset of them.
         """
-        debit = wm.Debit(1, 0, make_base_id(10), 'BTC', 'Bitcoin', 'unconfirmed', 'helper', make_base_id(10),
+        debit = wm.Debit(1, 0, make_base_id(10), 'BTC', 'helper', 'unconfirmed', 'helper', make_base_id(10),
                          self.manager_user.id, time=datetime.datetime.utcnow())
         # self.logger.debug("debit: %s" % debit)
         self.session.add(debit)

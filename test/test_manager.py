@@ -3,21 +3,42 @@ from ledger import Amount
 from ledger import Balance
 
 from jsonschema import validate
-from sqlalchemy_models import get_schemas, exchange as em
+from sqlalchemy_models import get_schemas, exchange as em, jsonify2
 
 from trade_manager.helper import TestPlugin, make_base_id
 from trade_manager.plugin import get_ticker, get_balances, get_orders, get_trades
 
 tp = TestPlugin()
 tp.setup_connections()
+tp.setup_logger()
 SCHEMAS = get_schemas()
+
+
+def check_test_ticker(ticker, market='BTC_USD'):
+    base, quote = market.split("_")
+    assert hasattr(ticker, 'bid')
+    assert isinstance(ticker.bid, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'ask')
+    assert isinstance(ticker.ask, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'high')
+    assert isinstance(ticker.high, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'low')
+    assert isinstance(ticker.low, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'volume')
+    assert isinstance(ticker.volume, Amount)
+    assert str(ticker.volume.commodity) == base
+    assert hasattr(ticker, 'market')
+    assert ticker.market == market
 
 
 def test_ticker():
     tp.sync_ticker('BTC_USD')
-    ticker = get_ticker('helper', 'BTC_USD')
-    tick = json.loads(ticker)
-    assert validate(tick, SCHEMAS['Ticker']) is None
+    ticker = get_ticker('helper', market='BTC_USD')
+    check_test_ticker(ticker)
 
 
 def test_balance():
@@ -93,8 +114,7 @@ def test_cancel_orders_by_side():
     tp.session.commit()
     tp.create_order(order.id)
     tp.create_order(order2.id)
-    obids = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'bid') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    obids = len(get_orders(exchange='helper', side='bid', state='open', session=tp.session))
     assert obids >= 2
     order = em.LimitOrder(100, 0.1, 'BTC_USD', 'ask', 'helper', order_id=make_base_id(l=10))
     tp.session.add(order)
@@ -103,15 +123,12 @@ def test_cancel_orders_by_side():
     tp.session.commit()
     tp.create_order(order.id)
     tp.create_order(order2.id)
-    oasks = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'ask') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    oasks = len(get_orders(exchange='helper', side='ask', state='open', session=tp.session))
     assert oasks >= 2
     tp.cancel_orders(side='bid')
-    bids = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'bid') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    bids = len(get_orders(exchange='helper', side='bid', state='open', session=tp.session))
     assert bids == 0
-    asks = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'ask') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    asks = len(get_orders(exchange='helper', side='ask', state='open', session=tp.session))
     assert asks > 0
     assert oasks == asks
 
@@ -124,8 +141,7 @@ def test_cancel_orders_by_market():
     tp.session.commit()
     tp.create_order(order.id)
     tp.create_order(order2.id)
-    obids = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'bid') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    obids = len(get_orders(exchange='helper', side='bid', state='open', session=tp.session))
     assert obids >= 2
     order = em.LimitOrder(100, 0.1, 'BTC_USD', 'ask', 'helper', order_id=make_base_id(l=10))
     tp.session.add(order)
@@ -137,15 +153,12 @@ def test_cancel_orders_by_market():
     tp.create_order(order.id)
     tp.create_order(order2.id)
     tp.create_order(order3.id)
-    oasks = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'ask') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    oasks = len(get_orders(exchange='helper', side='ask', state='open', session=tp.session))
     assert oasks >= 3
     tp.cancel_orders(market='BTC_USD')
-    bids = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'bid') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    bids = len(get_orders(exchange='helper', side='bid', state='open', session=tp.session))
     assert bids == 0
-    asks = tp.session.query(em.LimitOrder).filter(em.LimitOrder.side == 'ask') \
-        .filter(em.LimitOrder.state != 'closed').count()
+    asks = len(get_orders(exchange='helper', side='ask', state='open', session=tp.session))
     assert asks >= 1
 
 

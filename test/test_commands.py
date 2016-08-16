@@ -4,9 +4,11 @@ import unittest
 from ledger import Amount
 from ledger import Balance
 
+from alchemyjsonschema.dictify import datetime_rfc3339
 from jsonschema import validate
-from sqlalchemy_models import get_schemas, wallet as wm, exchange as em
+from sqlalchemy_models import get_schemas, wallet as wm, exchange as em, jsonify2
 from tappmq.tappmq import get_status
+from test.test_manager import check_test_ticker
 
 from trade_manager.helper import TestPlugin, start_test_man, stop_test_man
 from trade_manager.cli import handle_command
@@ -18,6 +20,7 @@ SCHEMAS = get_schemas()
 
 tp = TestPlugin()
 tp.setup_connections()
+tp.setup_logger()
 
 
 def test_status():
@@ -62,14 +65,15 @@ def test_ledger():
 P {2} BTC 100.00000000 USD
 P {2} USD 0.01000000 BTC
 {2} helper BTC_USD buy
-    ;<Trade(trade_id='{3}', side='buy', amount=0.01000000 BTC, price=100.00000000 USD, fee=0.00000000 USD, fee_side='quote', market='BTC_USD', exchange='helper', time={2})>
+    ;<Trade(trade_id='{4}', side='buy', amount=0.01000000 BTC, price=100.00000000 USD, fee=0.00000000 USD, fee_side='quote', market='BTC_USD', exchange='helper', time={3})>
     Assets:helper:USD    -1.00000000 USD @ 0.01000000 BTC
     FX:BTC_USD:buy   1.00000000 USD @ 0.01000000 BTC
     Assets:helper:BTC    0.01000000 BTC @ 100.00000000 USD
     FX:BTC_USD:buy   -0.01000000 BTC @ 100.00000000 USD
 
 """.format(credit.time.strftime('%Y/%m/%d %H:%M:%S'), debit.time.strftime('%Y/%m/%d %H:%M:%S'),
-           trade.time.strftime('%Y/%m/%d %H:%M:%S'), trade.trade_id)
+           trade.time.strftime('%Y/%m/%d %H:%M:%S'),
+           datetime_rfc3339(trade.time), trade.trade_id)
     assert ledger == hardledger
 
 
@@ -161,53 +165,53 @@ class TestPluginRunning(unittest.TestCase):
     def test_cancel_orders_by_market(self):
         create_order('helper', 100, 0.1, 'BTC_USD', 'bid', session=tp.session, submit=False)
         create_order('helper', 100, 0.1, 'BTC_USD', 'bid', session=tp.session, submit=False)
-        obids = len(get_orders(side='bid', state='pending', session=tp.session))
+        obids = len(get_orders(side='bid', exchange='helper', state='pending', session=tp.session))
         assert obids >= 2
         create_order('helper', 100, 0.1, 'BTC_USD', 'ask', session=tp.session, submit=False)
         create_order('helper', 100, 0.1, 'BTC_USD', 'ask', session=tp.session, submit=False)
         create_order('helper', 100, 0.1, 'DASH_BTC', 'ask', session=tp.session, submit=False)
-        oasks = len(get_orders(side='ask', state='pending', session=tp.session))
+        oasks = len(get_orders(side='ask', exchange='helper', state='pending', session=tp.session))
         assert oasks >= 3
         tp.session.close()
         cancel_orders('helper', market='BTC_USD')
-        orders = len(get_orders(market='BTC_USD', state='pending', session=tp.session))
+        orders = len(get_orders(market='BTC_USD', exchange='helper', state='pending', session=tp.session))
         countdown = 30
         while orders != 0 and countdown > 0:
             countdown -= 1
-            orders = len(get_orders(market='BTC_USD', state='pending', session=tp.session))
+            orders = len(get_orders(market='BTC_USD', exchange='helper', state='pending', session=tp.session))
             if orders != 0:
                 time.sleep(0.01)
                 tp.session.close()
         assert orders == 0
-        dorders = len(get_orders(market='DASH_BTC', state='pending', session=tp.session))
+        dorders = len(get_orders(market='DASH_BTC', exchange='helper', state='pending', session=tp.session))
         assert dorders >= 1
 
     def test_cancel_orders_by_side(self):
         create_order('helper', 100, 0.1, 'BTC_USD', 'bid', session=tp.session, submit=False)
         create_order('helper', 100, 0.1, 'BTC_USD', 'bid', session=tp.session, submit=False)
-        obids = len(get_orders(side='bid', state='pending', session=tp.session))
+        obids = len(get_orders(side='bid', exchange='helper', state='pending', session=tp.session))
         assert obids >= 2
         create_order('helper', 100, 0.1, 'BTC_USD', 'ask', session=tp.session, submit=False)
         create_order('helper', 100, 0.1, 'BTC_USD', 'ask', session=tp.session, submit=False)
-        oasks = len(get_orders(side='ask', state='pending', session=tp.session))
+        oasks = len(get_orders(side='ask', exchange='helper', state='pending', session=tp.session))
         assert oasks >= 2
         tp.session.close()
         cancel_orders('helper', side='bid')
-        bids = len(get_orders(side='bid', state='pending', session=tp.session))
+        bids = len(get_orders(side='bid', exchange='helper', state='pending', session=tp.session))
         countdown = 30
         while bids != 0 and countdown > 0:
             countdown -= 1
-            bids = len(get_orders(side='bid', state='pending', session=tp.session))
+            bids = len(get_orders(side='bid', exchange='helper', state='pending', session=tp.session))
             if bids != 0:
                 time.sleep(0.01)
                 tp.session.close()
         assert bids == 0
         tp.session.close()
-        asks = len(get_orders(side='ask', state='pending', session=tp.session))
+        asks = len(get_orders(side='ask', exchange='helper', state='pending', session=tp.session))
         countdown = 30
         while asks != 0 and countdown > 0:
             countdown -= 1
-            asks = len(get_orders(side='ask', state='pending', session=tp.session))
+            asks = len(get_orders(side='ask', exchange='helper', state='pending', session=tp.session))
             if asks != 0:
                 time.sleep(0.01)
                 tp.session.close()
@@ -248,54 +252,53 @@ class TestPluginRunning(unittest.TestCase):
         assert len(corder) == 1
         assert corder[0].state == 'closed'
 
-    def test_sync_credits(self):
-        credits = len(get_credits('helper', session=tp.session))
+    def test_sync_credits(self, rescan=False):
+        credits = len(get_credits(exchange='helper', session=tp.session))
         sync_credits('helper')
-        newcreds = len(get_credits('helper', session=tp.session))
+        newcreds = len(get_credits(exchange='helper', session=tp.session))
         countdown = 30
         while newcreds == credits and countdown > 0:
             countdown -= 1
-            newcreds = len(get_credits('helper', session=tp.session))
+            newcreds = len(get_credits(exchange='helper', session=tp.session))
             if newcreds == credits:
                 time.sleep(0.01)
+                tp.session.close()
         assert newcreds > credits
 
-    def test_sync_debits(self):
-        debits = len(get_debits('helper', session=tp.session))
+    def test_sync_debits(self, rescan=False):
+        debits = len(get_debits(exchange='helper', session=tp.session))
         sync_debits('helper')
-        newdebs = len(get_debits('helper', session=tp.session))
+        newdebs = len(get_debits(exchange='helper', session=tp.session))
         countdown = 30
         while newdebs == debits and countdown > 0:
             countdown -= 1
-            newdebs = len(get_debits('helper', session=tp.session))
+            newdebs = len(get_debits(exchange='helper', session=tp.session))
             if newdebs == debits:
                 time.sleep(0.01)
+                tp.session.close()
         assert newdebs > debits
 
-    def test_sync_trades(self):
-        trades = len(get_trades('helper', session=tp.session))
+    def test_sync_trades(self, rescan=False):
+        trades = len(get_trades(exchange='helper', session=tp.session))
         sync_trades('helper')
-        newtrades = len(get_trades('helper', session=tp.session))
+        newtrades = len(get_trades(exchange='helper', session=tp.session))
         countdown = 30
         while newtrades == trades and countdown > 0:
             countdown -= 1
-            newtrades = len(get_trades('helper', session=tp.session))
+            newtrades = len(get_trades(exchange='helper', session=tp.session))
             if newtrades == trades:
                 time.sleep(0.01)
+                tp.session.close()
         assert newtrades > trades
 
     def test_ticker(self):
-        sync_ticker('helper', 'BTC_USD')
-        tick = None
+        sync_ticker('helper', market='BTC_USD')
+        ticker = None
         countdown = 300
-        while tick is None and countdown > 0:
+        while ticker is None and countdown > 0:
             countdown -= 1
-            ticker = get_ticker('helper', 'BTC_USD')
-            try:
-                tick = json.loads(ticker)
-            except (ValueError, TypeError):
-                pass
-        assert validate(tick, SCHEMAS['Ticker']) is None
+            ticker = get_ticker('helper', market='BTC_USD')
+        check_test_ticker(ticker)
 
 
 class TestCLI(unittest.TestCase):
@@ -375,13 +378,11 @@ class TestCLI(unittest.TestCase):
         assert newtrades > trades
 
     def test_ticker(self):
-        sync_ticker('helper', 'BTC_USD')
+        sync_ticker('helper', market='BTC_USD')
         ticker = ""
         countdown = 30
         while (isinstance(ticker, int) or ticker == '') and countdown > 0:
             countdown -= 1
             time.sleep(0.1)
-            ticker = handle_command(['ticker', 'get', '-e', 'helper'], session=tp.session)
-        assert '{"volume": 1000.0, "last": 100.0, "exchange": "helper", "bid": 99.0, "high": 110.0, ' \
-               '"low": 90.0, "time": "' in ticker
-        assert '", "ask": 101.0, "market": "BTC_USD"}' in ticker
+            ticker = handle_command(['ticker', 'get', '-e', 'helper', '-m', 'BTC_USD'], session=tp.session)
+        check_test_ticker(ticker)

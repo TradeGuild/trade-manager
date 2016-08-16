@@ -164,9 +164,22 @@ def handle_trade_command(argv, parsers, session=ses):
         return sync_trades(exchange=args.e, market=args.m, rescan=args.rescan)
 
 
+def handle_config_command(argv, parsers):
+    parser = argparse.ArgumentParser(parents=parsers)
+    parser.add_argument("subcommand", choices=["get", "set"], help='The order sub-command to run.')
+    parser.add_argument("target", choices=["pref_ex", ""], help='The order sub-command to run.')
+    parser.add_argument("-m", help='The market to get a ticker for.')
+    parser.add_argument("-e", help='The exchange to get a ticker for.')
+    args = parser.parse_args(argv)
+    if args.subcommand == "get":
+        return get_ticker(args.e, args.m, red=red)
+    elif args.subcommand == "sync":
+        sync_ticker(args.e, args.m)
+
+
 def handle_command(argv=sys.argv[1:], session=ses):
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address', 'isysd'],
+    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address', 'config'],
                         help="'%(prog)s <command> help' for usage details")
     if len(argv) == 0:
         parser.print_help()
@@ -183,11 +196,8 @@ def handle_command(argv=sys.argv[1:], session=ses):
         return handle_trade_command(argv, [parser], session=session)
     elif args.command == 'balance':
         return handle_balance_command(argv, [parser], session=session)
-    elif args.command == 'isysd':  # TODO
-        r = 10
-        for i in range(r):
-            #create_order('bitfinex', 0.36+float(i)/100, 1000, 'BFX_USD', 'ask', session=session)
-            create_order('bitfinex', 0.32 - float(i) / 100, 1000, 'BFX_USD', 'bid', session=session)
+    elif args.command == 'config':
+        return handle_config_command(argv, [parser], session=session)
 
 
 if __name__ == "__main__":
