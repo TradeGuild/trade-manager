@@ -1,11 +1,11 @@
 import argparse
 import sys
-
+import time
+from ledger import Amount
 from tapp_config import setup_redis
-
 from trade_manager import ses
 from trade_manager.plugin import sync_ticker, get_ticker, sync_orders, make_ledger, get_orders, cancel_orders, \
-    get_balances, sync_balances, get_trades, sync_trades, create_order
+    get_balances, sync_balances, get_trades, sync_trades, create_order, sync_credits, sync_debits
 
 red = setup_redis()
 
@@ -13,7 +13,7 @@ red = setup_redis()
 def handle_ticker_command(argv, parsers):
     parser = argparse.ArgumentParser(parents=parsers)
     parser.add_argument("subcommand", choices=["get", "sync"], help='The order sub-command to run.')
-    parser.add_argument("-m", default="BTC_USD", help='The market to get a ticker for.')
+    parser.add_argument("-m", help='The market to get a ticker for.')
     parser.add_argument("-e", help='The exchange to get a ticker for.')
     args = parser.parse_args(argv)
     if args.subcommand == "get":
@@ -22,15 +22,22 @@ def handle_ticker_command(argv, parsers):
         sync_ticker(args.e, args.m)
 
 
-def handle_ledger_command(argv, parsers):
+def handle_ledger_command(argv, parsers, session=ses):
     parser = argparse.ArgumentParser(parents=parsers)
+    parser.add_argument("subcommand", choices=["get", "sync"], help='The ledger sub-command to run.')
     parser.add_argument("-e", help='The exchange to get a ledger for.')
+    parser.add_argument('--rescan', dest='rescan', action='store_true')
+    parser.add_argument('--no-rescan', dest='rescan', action='store_false')
+    parser.set_defaults(rescan=False)
     args = parser.parse_args(argv)
-    exchange = args.e
-    return make_ledger(exchange=exchange)
+    if args.subcommand == "get":
+        return make_ledger(exchange=args.e, session=session)
+    elif args.subcommand == "sync":
+        sync_credits(exchange=args.e, rescan=args.rescan)
+        sync_debits(exchange=args.e, rescan=args.rescan)
 
 
-def handle_order_command(argv, parsers):
+def handle_order_command(argv, parsers, session=ses):
     oparser = argparse.ArgumentParser(parents=parsers, add_help=False)
     oparser.add_argument("subcommand", choices=['get', 'sync', 'create', 'cancel'], help='Order sub-commands')
 
@@ -38,23 +45,23 @@ def handle_order_command(argv, parsers):
     # parsers.append(oparser)
     parsers = [oparser]
     if args.subcommand == 'get':
-        return handle_get_order(argv, parsers)
+        return handle_get_order(argv, parsers, session=session)
     elif args.subcommand == 'sync':
         return handle_sync_order(argv, parsers)
     elif args.subcommand == 'create':
-        return handle_create_order(argv, parsers)
+        return handle_create_order(argv, parsers, session=session)
     elif args.subcommand == 'cancel':
         return handle_cancel_order(argv, parsers)
 
 
-def handle_get_order(argv, parsers):
+def handle_get_order(argv, parsers, session=ses):
     oparser = argparse.ArgumentParser(parents=parsers)
     oparser.add_argument("--oid", help='The order id.')
     oparser.add_argument("--order_id", help='The order order_id.')
     oparser.add_argument("-m", help='The order market.')
     oparser.add_argument("-e", help='The order exchange.')
     args = oparser.parse_args(argv)
-    return get_orders(exchange=args.e, market=args.m, oid=args.oid, order_id=args.order_id, session=ses)
+    return get_orders(exchange=args.e, market=args.m, oid=args.oid, order_id=args.order_id, session=session)
 
 
 def handle_sync_order(argv, parsers):
@@ -68,7 +75,7 @@ def handle_sync_order(argv, parsers):
     sync_orders(args.e, data)
 
 
-def handle_create_order(argv, parsers):
+def handle_create_order(argv, parsers, session=ses):
     oparser = argparse.ArgumentParser(parents=parsers)
     oparser.add_argument("side", choices=['bid', 'ask'], help='The order side')
     oparser.add_argument("amount", help='The order amount')
@@ -76,7 +83,7 @@ def handle_create_order(argv, parsers):
     oparser.add_argument("market", help='The order market')
     oparser.add_argument("exchange", help='The order exchange')
     args = oparser.parse_args(argv)
-    return create_order(args.exchange, float(args.price), float(args.amount), args.market, args.side, session=ses)
+    return create_order(args.exchange, float(args.price), float(args.amount), args.market, args.side, session=session)
 
 
 def handle_cancel_order(argv, parsers):
@@ -90,39 +97,76 @@ def handle_cancel_order(argv, parsers):
     return cancel_orders(args.e, args.m, side=args.s, oid=args.oid, order_id=args.order_id)
 
 
-def handle_balance_command(argv, parsers):
+def handle_balance_command(argv, parsers, session=ses):
     bparser = argparse.ArgumentParser(parents=parsers)
-    bparser.add_argument("subcommand", choices=["get", "sync"], help='The balance sub-command to run.')
+    bparser.add_argument("subcommand", choices=["get", "sync", "summary"], help='The balance sub-command to run.')
     bparser.add_argument("-e", help='The exchange.')
     bparser.add_argument("-c", help='The currency.')
     args = bparser.parse_args(argv)
     if args.subcommand == 'get':
-        bals = get_balances(args.e, session=ses)
+        bals = get_balances(exchange=args.e, currency=args.c, session=session)
         rbals = []
         for bal in bals:
             rbals.append(bal.to_string())
         return rbals
     elif args.subcommand == 'sync':
         return sync_balances(args.e)
+    elif args.subcommand == 'summary':
+        return get_balance_summary(session=session)
 
 
-def handle_trade_command(argv, parsers):
+def get_balance_summary(session=ses):
+    bals = get_balances(session=session)
+    resp = "\n_______ %s _______\n" % time.asctime(time.gmtime(time.time()))
+    usdtotal = Amount("0 USD")
+    details = {}
+    for amount in bals[0]:
+        comm = str(amount.commodity)
+        if comm == 'USD':
+            inde = Amount("1 USD")
+            details['USD'] = {'index': inde, 'amount': amount}
+            usdtotal = usdtotal + amount
+        else:
+            ticker = get_ticker(market="%s_USD" % comm, red=red)
+            if not ticker:
+                resp += "skipping inactive bal %s\n" % amount
+                continue
+            inde = ticker.calculate_index()
+            details[comm] = {'index': inde, 'amount': Amount("%s USD" % amount.number()) * inde}
+            usdtotal = usdtotal + details[comm]['amount']
+    resp += "\nTotal Value:\t$%s\n\n" % usdtotal.number()
+
+    for amount in bals[0]:
+        comm = str(amount.commodity)
+        if comm in details:
+            damount = details[comm]['amount'].to_double()
+            percent = (details[comm]['amount'] / usdtotal * Amount("100 USD")).to_double()
+            resp += "{0:16s}\t==\t${1:8.2f} ({2:3.2f}%)\t@ ${3:8.4f}\n".format(amount, damount,
+                                                                               percent,
+                                                                               details[comm]['index'].to_double())
+    return resp
+
+
+def handle_trade_command(argv, parsers, session=ses):
     tparser = argparse.ArgumentParser(parents=parsers)
     tparser.add_argument("subcommand", choices=["get", "sync"], help='The trade sub-command to run.')
     tparser.add_argument("-m", help='The market to get trades for.')
     tparser.add_argument("-e", help='The exchange to get trades for.')
     tparser.add_argument("--tid", help='The trade id to get.')
+    tparser.add_argument('--rescan', dest='rescan', action='store_true')
+    tparser.add_argument('--no-rescan', dest='rescan', action='store_false')
+    tparser.set_defaults(rescan=False)
     args = tparser.parse_args(argv)
 
     if args.subcommand == "get":
-        return get_trades(args.e, args.m, args.tid, session=ses)
+        return get_trades(args.e, args.m, args.tid, session=session)
     elif args.subcommand == "sync":
-        return sync_trades(args.e, args.m)
+        return sync_trades(exchange=args.e, market=args.m, rescan=args.rescan)
 
 
-def handle_command(argv=sys.argv[1:]):
+def handle_command(argv=sys.argv[1:], session=ses):
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address'],
+    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address', 'isysd'],
                         help="'%(prog)s <command> help' for usage details")
     if len(argv) == 0:
         parser.print_help()
@@ -132,13 +176,18 @@ def handle_command(argv=sys.argv[1:]):
     if args.command == 'ticker':
         return handle_ticker_command(argv, [parser])
     elif args.command == 'ledger':
-        return handle_ledger_command(argv, [parser])
+        return handle_ledger_command(argv, [parser], session=session)
     elif args.command == 'order':
-        return handle_order_command(argv, [parser])
+        return handle_order_command(argv, [parser], session=session)
     elif args.command == 'trade':
-        return handle_trade_command(argv, [parser])
+        return handle_trade_command(argv, [parser], session=session)
     elif args.command == 'balance':
-        return handle_balance_command(argv, [parser])
+        return handle_balance_command(argv, [parser], session=session)
+    elif args.command == 'isysd':  # TODO
+        r = 10
+        for i in range(r):
+            #create_order('bitfinex', 0.36+float(i)/100, 1000, 'BFX_USD', 'ask', session=session)
+            create_order('bitfinex', 0.32 - float(i) / 100, 1000, 'BFX_USD', 'bid', session=session)
 
 
 if __name__ == "__main__":

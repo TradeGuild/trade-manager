@@ -6,9 +6,9 @@ makebase = if [ !  -d ~/.tapp ]; \
 makedirs = if [ !  -d ~/.tapp/trademanager ]; \
 	then \
 		mkdir ~/.tapp/trademanager; \
-		mkdir ~/.tapp/test; \
+		mkdir ~/.tapp/helper; \
 		cp cfg.ini ~/.tapp/trademanager; \
-		cp cfg.ini ~/.tapp/test; \
+		cp cfg.ini ~/.tapp/helper; \
 	fi
 
 installprereqs = if [ !  -d $(1)ledger ]; \
@@ -54,4 +54,4 @@ purge:
 	rm -rf test/*.pyc *.egg *~ *pyc test/*~ .eggs
 	rm -f .coverage*
 	rm -rf ~/.tapp/trademanager
-	rm -rf ~/.tapp/test
+	rm -rf ~/.tapp/helper
