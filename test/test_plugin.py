@@ -1,38 +1,17 @@
-import json
-from ledger import Amount
-from ledger import Balance
+import time
+from ledger import Amount, Balance
 
-from jsonschema import validate
-from sqlalchemy_models import get_schemas, exchange as em, jsonify2
+from alchemyjsonschema.dictify import datetime_rfc3339
 
-from trade_manager.helper import TestPlugin, make_base_id
-from trade_manager.plugin import get_ticker, get_balances, get_orders, get_trades
+from helper import TestPlugin, make_base_id
+from sqlalchemy_models import get_schemas, exchange as em, wallet as wm
+from test.helper import check_test_ticker
+from trade_manager.plugin import get_ticker, get_balances, get_orders, get_trades, make_ledger, get_debits, get_credits
 
 tp = TestPlugin()
 tp.setup_connections()
 tp.setup_logger()
 SCHEMAS = get_schemas()
-
-
-def check_test_ticker(ticker, market='BTC_USD'):
-    base, quote = market.split("_")
-    assert hasattr(ticker, 'bid')
-    assert isinstance(ticker.bid, Amount)
-    assert str(ticker.bid.commodity) == quote
-    assert hasattr(ticker, 'ask')
-    assert isinstance(ticker.ask, Amount)
-    assert str(ticker.bid.commodity) == quote
-    assert hasattr(ticker, 'high')
-    assert isinstance(ticker.high, Amount)
-    assert str(ticker.bid.commodity) == quote
-    assert hasattr(ticker, 'low')
-    assert isinstance(ticker.low, Amount)
-    assert str(ticker.bid.commodity) == quote
-    assert hasattr(ticker, 'volume')
-    assert isinstance(ticker.volume, Amount)
-    assert str(ticker.volume.commodity) == base
-    assert hasattr(ticker, 'market')
-    assert ticker.market == market
 
 
 def test_ticker():
@@ -75,13 +54,6 @@ def test_cancel_order_order_id():
     assert isinstance(order.price, Amount)
     assert order.price == Amount("100 USD")
     assert order.state == 'open'
-    # porder = get_orders(oid=order.id, session=tp.session)
-    # assert len(porder) == 1
-    # assert porder[0].state == 'open'
-    # tp.sync_orders()
-    # oorder = get_orders(oid=order.id, session=tp.session)
-    # assert len(oorder) == 1
-    # assert oorder[0].state == 'open'
     tp.cancel_orders(order_id=order.order_id)
     corder = get_orders(oid=order.id, session=tp.session)
     assert len(corder) == 1
@@ -97,9 +69,6 @@ def test_cancel_order_order_id_no_prefix():
     assert isinstance(order.price, Amount)
     assert order.price == Amount("100 USD")
     assert order.state == 'open'
-    # porder = get_orders(oid=order.id, session=tp.session)
-    # assert len(porder) == 1
-    # assert porder[0].state == 'pending'
     tp.cancel_orders(order_id=order.order_id.split("|")[1])
     corder = get_orders(oid=order.id, session=tp.session)
     assert len(corder) == 1
@@ -197,3 +166,45 @@ def test_get_trades():
     assert len(trades) >= 1
     for trade in trades:
         assert trade.market == 'DASH_BTC'
+
+
+def test_ledger():
+    tp.session.query(em.Trade).delete()
+    tp.session.query(wm.Credit).delete()
+    tp.session.query(wm.Debit).delete()
+    tp.session.commit()
+    tp.sync_credits()
+    tp.sync_debits()
+    tp.sync_trades()
+    trades = get_trades('helper', session=tp.session)
+    countdown = 30
+    while len(trades) != 1 and countdown > 0:
+        countdown -= 1
+        trades = get_trades('helper', session=tp.session)
+        if len(trades) != 1:
+            time.sleep(0.01)
+    credit = get_credits(session=tp.session)[0]
+    debit = get_debits(session=tp.session)[0]
+    trade = trades[0]
+    ledger = make_ledger('helper')
+    hardledger = """{0} helper credit BTC
+    Assets:helper:BTC:credit    1.00000000 BTC
+    Equity:Wallet:BTC:debit   -1.00000000 BTC
+
+{1} helper debit BTC
+    Assets:helper:BTC:debit    -1.00000000 BTC
+    Equity:Wallet:BTC:credit   1.00000000 BTC
+
+P {2} BTC 100.00000000 USD
+P {2} USD 0.01000000 BTC
+{2} helper BTC_USD buy
+    ;<Trade(trade_id='{4}', side='buy', amount=0.01000000 BTC, price=100.00000000 USD, fee=0.00000000 USD, fee_side='quote', market='BTC_USD', exchange='helper', time={3})>
+    Assets:helper:USD    -1.00000000 USD @ 0.01000000 BTC
+    FX:BTC_USD:buy   1.00000000 USD @ 0.01000000 BTC
+    Assets:helper:BTC    0.01000000 BTC @ 100.00000000 USD
+    FX:BTC_USD:buy   -0.01000000 BTC @ 100.00000000 USD
+
+""".format(credit.time.strftime('%Y/%m/%d %H:%M:%S'), debit.time.strftime('%Y/%m/%d %H:%M:%S'),
+           trade.time.strftime('%Y/%m/%d %H:%M:%S'),
+           datetime_rfc3339(trade.time), trade.trade_id)
+    assert ledger == hardledger

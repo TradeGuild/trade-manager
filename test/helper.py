@@ -16,7 +16,7 @@ from trade_manager.plugin import ExchangePluginBase
 
 def start_test_man(name='helper'):
     command = name if name != 'test' else 'helper'
-    os.system("supervisorctl start %s" % command)
+    os.system("supervisorctl -c test_supervisord.conf start %s" % command)
     status = 'stopped'
     countdown = 100  # 10 seconds
     while status != 'running' and countdown > 0:
@@ -27,7 +27,7 @@ def start_test_man(name='helper'):
 
 def stop_test_man(name='helper'):
     command = name if name != 'test' else 'helper'
-    os.system("supervisorctl stop %s" % command)
+    os.system("supervisorctl -c test_supervisord.conf stop %s" % command)
     status = 'running'
     countdown = 100  # 10 seconds
     while status != 'stopped' and countdown > 0:
@@ -224,3 +224,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def check_test_ticker(ticker, market='BTC_USD'):
+    base, quote = market.split("_")
+    assert hasattr(ticker, 'bid')
+    assert isinstance(ticker.bid, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'ask')
+    assert isinstance(ticker.ask, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'high')
+    assert isinstance(ticker.high, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'low')
+    assert isinstance(ticker.low, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'volume')
+    assert isinstance(ticker.volume, Amount)
+    assert str(ticker.volume.commodity) == base
+    assert hasattr(ticker, 'market')
+    assert ticker.market == market

@@ -1,22 +1,18 @@
-import json
-import time
-import unittest
-from ledger import Amount
+from unittest import TestCase
+
 from ledger import Balance
 
-from alchemyjsonschema.dictify import datetime_rfc3339
-from jsonschema import validate
-from sqlalchemy_models import get_schemas, wallet as wm, exchange as em, jsonify2
+from ledger import Amount
+
+import time
+
 from tappmq.tappmq import get_status
-from test.test_manager import check_test_ticker
+from test.helper import stop_test_man, start_test_man, TestPlugin, check_test_ticker
+from test.test_plugin import check_test_ticker
+from trade_manager.plugin import get_balances, create_order, submit_order, get_orders, get_credits, sync_credits, \
+    get_debits, sync_debits, get_trades, sync_trades, sync_ticker, get_ticker, cancel_orders
+from trade_manager.plugin import sync_balances
 
-from trade_manager.helper import TestPlugin, start_test_man, stop_test_man
-from trade_manager.cli import handle_command
-from trade_manager.plugin import get_orders, get_trades, sync_ticker, get_debits, sync_balances, get_credits, \
-    make_ledger, get_ticker, get_balances, create_order, sync_orders, cancel_orders, sync_credits, sync_debits, \
-    sync_trades, submit_order
-
-SCHEMAS = get_schemas()
 
 tp = TestPlugin()
 tp.setup_connections()
@@ -35,49 +31,7 @@ def test_status():
     assert status == 'stopped'
 
 
-def test_ledger():
-    tp.session.query(em.Trade).delete()
-    tp.session.query(wm.Credit).delete()
-    tp.session.query(wm.Debit).delete()
-    tp.session.commit()
-    tp.sync_credits()
-    tp.sync_debits()
-    tp.sync_trades()
-    trades = get_trades('helper', session=tp.session)
-    countdown = 30
-    while len(trades) != 1 and countdown > 0:
-        countdown -= 1
-        trades = get_trades('helper', session=tp.session)
-        if len(trades) != 1:
-            time.sleep(0.01)
-    credit = get_credits(session=tp.session)[0]
-    debit = get_debits(session=tp.session)[0]
-    trade = trades[0]
-    ledger = make_ledger('helper')
-    hardledger = """{0} helper credit BTC
-    Assets:helper:BTC:credit    1.00000000 BTC
-    Equity:Wallet:BTC:debit   -1.00000000 BTC
-
-{1} helper debit BTC
-    Assets:helper:BTC:debit    -1.00000000 BTC
-    Equity:Wallet:BTC:credit   1.00000000 BTC
-
-P {2} BTC 100.00000000 USD
-P {2} USD 0.01000000 BTC
-{2} helper BTC_USD buy
-    ;<Trade(trade_id='{4}', side='buy', amount=0.01000000 BTC, price=100.00000000 USD, fee=0.00000000 USD, fee_side='quote', market='BTC_USD', exchange='helper', time={3})>
-    Assets:helper:USD    -1.00000000 USD @ 0.01000000 BTC
-    FX:BTC_USD:buy   1.00000000 USD @ 0.01000000 BTC
-    Assets:helper:BTC    0.01000000 BTC @ 100.00000000 USD
-    FX:BTC_USD:buy   -0.01000000 BTC @ 100.00000000 USD
-
-""".format(credit.time.strftime('%Y/%m/%d %H:%M:%S'), debit.time.strftime('%Y/%m/%d %H:%M:%S'),
-           trade.time.strftime('%Y/%m/%d %H:%M:%S'),
-           datetime_rfc3339(trade.time), trade.trade_id)
-    assert ledger == hardledger
-
-
-class TestPluginRunning(unittest.TestCase):
+class TestPluginRunning(TestCase):
     def setUp(self):
         start_test_man()
 
@@ -252,7 +206,7 @@ class TestPluginRunning(unittest.TestCase):
         assert len(corder) == 1
         assert corder[0].state == 'closed'
 
-    def test_sync_credits(self, rescan=False):
+    def test_sync_credits(self):
         credits = len(get_credits(exchange='helper', session=tp.session))
         sync_credits('helper')
         newcreds = len(get_credits(exchange='helper', session=tp.session))
@@ -265,7 +219,7 @@ class TestPluginRunning(unittest.TestCase):
                 tp.session.close()
         assert newcreds > credits
 
-    def test_sync_debits(self, rescan=False):
+    def test_sync_debits(self):
         debits = len(get_debits(exchange='helper', session=tp.session))
         sync_debits('helper')
         newdebs = len(get_debits(exchange='helper', session=tp.session))
@@ -278,7 +232,7 @@ class TestPluginRunning(unittest.TestCase):
                 tp.session.close()
         assert newdebs > debits
 
-    def test_sync_trades(self, rescan=False):
+    def test_sync_trades(self):
         trades = len(get_trades(exchange='helper', session=tp.session))
         sync_trades('helper')
         newtrades = len(get_trades(exchange='helper', session=tp.session))
@@ -298,91 +252,4 @@ class TestPluginRunning(unittest.TestCase):
         while ticker is None and countdown > 0:
             countdown -= 1
             ticker = get_ticker('helper', market='BTC_USD')
-        check_test_ticker(ticker)
-
-
-class TestCLI(unittest.TestCase):
-    def setUp(self):
-        start_test_man()
-
-    def tearDown(self):
-        stop_test_man()
-
-    def test_balance(self):
-        sync_balances('helper')
-        balance = ""
-        countdown = 30
-        while (isinstance(balance, int) or balance == '') and countdown > 0:
-            countdown -= 1
-            time.sleep(0.1)
-            balance = handle_command(['balance', 'get', '-e', 'helper'], session=tp.session)
-        assert str(balance) == "['0', '0']"
-
-    def test_order_lifecycle(self):
-        order = str(handle_command(['order', 'create', 'bid', '100', '0.1', 'BTC_USD', 'helper'], session=tp.session))
-        order_id = order[order.find("order_id") + 10: order.find("state") - 3]
-        exporder = "<LimitOrder(price=0.10000000 USD, amount=100.00000000 BTC, exec_amount=0.00000000 BTC, " \
-                   "market='BTC_USD', side='bid', exchange='helper', order_id='{0}', state='pending', " \
-                   "create_time=".format(order_id)
-        assert exporder in order
-        gotorder = str(handle_command(['order', 'get', '-e', 'helper', '--order_id', order_id], session=tp.session))
-        assert exporder in order
-        assert exporder in gotorder
-
-        order_id = order_id.replace('tmp', 'helper')
-        exporder = exporder.replace("pending", "open").replace('tmp', 'helper')
-        tp.session.close()
-        oorder = get_orders('helper', order_id=order_id, session=tp.session)
-        countdown = 30
-        while (len(oorder) == 0 or oorder[0].state != 'open') and countdown > 0:
-            countdown -= 1
-            oorder = get_orders('helper', order_id=order_id, session=tp.session)
-            if len(oorder) == 0 or oorder[0].state != 'open':
-                time.sleep(0.01)
-                tp.session.close()
-        assert len(oorder) == 1
-        assert oorder[0].state == 'open'
-        clioorder = str(
-            handle_command(['order', 'get', '-e', 'helper', '--order_id', order_id.split("|")[1]], session=tp.session))
-        assert exporder in clioorder.strip('[]')
-        handle_command(['order', 'cancel', 'helper', '--order_id', order_id.replace('tmp', 'helper').split("|")[1]],
-                       session=tp.session)
-        exporder = exporder.replace("open", "closed")
-        countdown = 30
-        tp.session.close()
-        corder = get_orders('helper', order_id=oorder[0].order_id, session=tp.session)
-        while corder[0].state != 'closed' and countdown > 0:
-            countdown -= 1
-            corder = get_orders('helper', order_id=oorder[0].order_id, session=tp.session)
-            if corder[0].state != 'closed':
-                time.sleep(0.01)
-                tp.session.close()
-        assert len(corder) == 1
-        assert corder[0].state == 'closed'
-        clicorder = str(
-            handle_command(['order', 'get', '-e', 'helper', '--order_id', order_id.split("|")[1]], session=tp.session))
-        assert exporder in clicorder.strip('[]')
-
-    def test_sync_trades(self):
-        trades = len(get_trades('helper', session=tp.session))
-        handle_command(['trade', 'sync', '-e', 'helper'], session=tp.session)
-        tp.session.close()
-        newtrades = len(get_trades('helper', session=tp.session))
-        countdown = 30
-        while newtrades == trades and countdown > 0:
-            countdown -= 1
-            newtrades = len(get_trades('helper', session=tp.session))
-            if newtrades == trades:
-                time.sleep(0.01)
-                tp.session.close()
-        assert newtrades > trades
-
-    def test_ticker(self):
-        sync_ticker('helper', market='BTC_USD')
-        ticker = ""
-        countdown = 30
-        while (isinstance(ticker, int) or ticker == '') and countdown > 0:
-            countdown -= 1
-            time.sleep(0.1)
-            ticker = handle_command(['ticker', 'get', '-e', 'helper', '-m', 'BTC_USD'], session=tp.session)
         check_test_ticker(ticker)
