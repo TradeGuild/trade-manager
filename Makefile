@@ -5,6 +5,7 @@ PREREQDIR=.
 makelog = if [ !  -d /var/log/trademanager/ ]; \
 	then \
 		sudo mkdir /var/log/trademanager/; \
+		sudo chown $(USER) /var/log/trademanager/; \
 	fi
 
 makerun = if [ !  -d /var/run/trademanager/ ]; \

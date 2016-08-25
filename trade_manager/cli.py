@@ -5,7 +5,9 @@ from ledger import Amount
 from tapp_config import setup_redis
 from trade_manager import ses
 from trade_manager.plugin import sync_ticker, get_ticker, sync_orders, make_ledger, get_orders, cancel_orders, \
-    get_balances, sync_balances, get_trades, sync_trades, create_order, sync_credits, sync_debits
+    get_balances, sync_balances, get_trades, sync_trades, create_order, sync_credits, sync_debits, add_active_market, \
+    rem_active_market, set_preferred_exchange, get_preferred_exchange, sync_book, get_commodity_config, \
+    set_commodity_config
 
 red = setup_redis()
 
@@ -164,22 +166,57 @@ def handle_trade_command(argv, parsers, session=ses):
         return sync_trades(exchange=args.e, market=args.m, rescan=args.rescan)
 
 
-def handle_config_command(argv, parsers):
+def handle_market_command(argv, parsers):
     parser = argparse.ArgumentParser(parents=parsers)
-    parser.add_argument("subcommand", choices=["get", "set"], help='The order sub-command to run.')
-    parser.add_argument("target", choices=["pref_ex", ""], help='The order sub-command to run.')
-    parser.add_argument("-m", help='The market to get a ticker for.')
-    parser.add_argument("-e", help='The exchange to get a ticker for.')
+    parser.add_argument("subcommand", choices=["add", "rem", "pref"], help='The configure markets sub-command to run.')
+    parser.add_argument("market", help='The market to configure.')
+    parser.add_argument("exchange", help='The exchange to configure with a market.')
+    args = parser.parse_args(argv)
+    if args.subcommand == "add":
+        add_active_market(market=args.market, exchange=args.exchange)
+    elif args.subcommand == "rem":
+        rem_active_market(market=args.market, exchange=args.exchange)
+    elif args.subcommand == "pref":
+        if args.exchange is not None and args.exchange != "":
+            set_preferred_exchange(market=args.market, exchange=args.exchange)
+        else:
+            set_preferred_exchange(market=args.market, exchange=None)
+
+
+def handle_commodity_command(argv, parsers):
+    parser = argparse.ArgumentParser(parents=parsers)
+    parser.add_argument("subcommand", choices=["get", "set"],
+                        help='The configure commodity sub-command to run.')
+    parser.add_argument("commodity", help='The commodity to configure.')
+    parser.add_argument("weight", help='The weight to give this commodity in deciding exposure.'
+                                       ' Higher == more exposure')
+    parser.add_argument("floor", help='The commodity percent of total holdings floor.')
+    parser.add_argument("target", help='The commodity percent of total holdings target.')
+    parser.add_argument("ceil", help='The commodity percent of total holdings ceiling.')
     args = parser.parse_args(argv)
     if args.subcommand == "get":
-        return get_ticker(args.e, args.m, red=red)
-    elif args.subcommand == "sync":
-        sync_ticker(args.e, args.m)
+        return get_commodity_config(args.commodity)
+    elif args.subcommand == "set":
+        set_commodity_config(args.commodity, weight=args.weight, cfloor=args.floor, ctarget=args.target,
+                             cceil=args.ceil)
+
+
+# def handle_book_command(argv, parsers):
+#     parser = argparse.ArgumentParser(parents=parsers)
+#     parser.add_argument("subcommand", choices=["get", "sync"], help='The book sub-command to run.')
+#     parser.add_argument("-m", help='The market to get a book for.')
+#     parser.add_argument("-e", help='The exchange to get a book for.')
+#     args = parser.parse_args(argv)
+#     if args.subcommand == "get":
+#         return get_book(args.e, args.m, red=red)
+#     elif args.subcommand == "sync":
+#         sync_book(args.e, args.m)
 
 
 def handle_command(argv=sys.argv[1:], session=ses):
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address', 'config'],
+    parser.add_argument("command", choices=['ticker', 'ledger', 'order', 'trade', 'balance', 'address', 'market',
+                                            'commodity'],
                         help="'%(prog)s <command> help' for usage details")
     if len(argv) == 0:
         parser.print_help()
@@ -190,14 +227,18 @@ def handle_command(argv=sys.argv[1:], session=ses):
         return handle_ticker_command(argv, [parser])
     elif args.command == 'ledger':
         return handle_ledger_command(argv, [parser], session=session)
+    # elif args.command == 'book':
+    #     return handle_book_command(argv, [parser], session=session)
     elif args.command == 'order':
         return handle_order_command(argv, [parser], session=session)
     elif args.command == 'trade':
         return handle_trade_command(argv, [parser], session=session)
     elif args.command == 'balance':
         return handle_balance_command(argv, [parser], session=session)
-    elif args.command == 'config':
-        return handle_config_command(argv, [parser], session=session)
+    elif args.command == 'market':
+        return handle_market_command(argv, [parser])
+    elif args.command == 'commodity':
+        return handle_commodity_command(argv, [parser])
 
 
 if __name__ == "__main__":
