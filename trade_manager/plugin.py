@@ -253,14 +253,22 @@ class ExchangePluginBase(MQHandlerBase):
         """
         raise NotImplementedError()
 
-    @classmethod
-    def sync_book(cls, market=None):
+    def sync_book(self, market=None):
+        """
+        Synchronize the orderbook for this exchange.
+
+        :param str market: The market to sync the book for.
+
+        :return: a list of bids and asks
+        :rtype: list
+        """
+        raise NotImplementedError()
+
+    def get_book(self, market=None):
         """
         Get the orderbook for this exchange.
 
-        :param str market: If the exchange supports multiple markets, then the "market" param
-                     can be used to specify a given orderbook. In case the exchange
-                     does not support that, then the "market" param is ignored.
+        :param str market: he market to get the book for.
 
         :return: a list of bids and asks
         :rtype: list
@@ -274,7 +282,10 @@ Redis command interface. Call these functions from anywhere and to any of the ex
 
 
 def set_preferred_exchange(market, exchange):
-    red.set('%s_preferred_exchange' % market, exchange)
+    if exchange is None or exchange == '':
+        red.delete('%s_preferred_exchange' % market)
+    else:
+        red.set('%s_preferred_exchange' % market, exchange)
 
 
 def get_preferred_exchange(market):
@@ -314,12 +325,13 @@ def rem_active_markets(exchange, markets):
         except ValueError:
             # safe to ignore; market was already inactive
             continue
-    red.set('%s_active_markets' % exchange, active_markets)
+    red.set('%s_active_markets' % exchange, json.dumps(active_markets))
 
 
 def get_active_markets(exchange):
     active_markets = red.get('%s_active_markets' % exchange)
     if active_markets is not None and len(active_markets) > 2:  # is not "[]"
+
         markets = json.loads(active_markets)
     else:
         cfg = get_config(name=exchange)
@@ -329,7 +341,7 @@ def get_active_markets(exchange):
 
 def set_commodity_config(commodity, weight=1.0, cfloor=0.0, ctarget=0.0, cceil=0.0):
     detail = {'weight': weight, 'floor': cfloor, 'target': ctarget, 'ceil': cceil}
-    red.set('%s_config' % commodity, detail)
+    red.set('%s_config' % commodity, json.dumps(detail))
 
 
 def get_commodity_config(commodity):
@@ -437,6 +449,13 @@ def sync_credits(exchange, rescan=False):
 def sync_debits(exchange, rescan=False):
     data = {'rescan': rescan}
     publish(exchange, 'sync_debits', data)
+
+
+def sync_book(exchange, market=None):
+    data = {}
+    if market is not None:
+        data['market'] = market
+    publish(exchange, 'sync_book', data)
 
 
 """

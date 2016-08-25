@@ -8,14 +8,14 @@ classifiers = [
 
 setup(
     name='trade_manager',
-    version='0.0.5.2',
+    version='0.0.6',
     packages=['trade_manager'],
     url='https://github.com/gitguild/trade-manager',
     license='MIT',
     classifiers=classifiers,
     author='Ira Miller',
     author_email='ira@gitguild.com',
-    description=' A program for managing cryptocurrency trading on a variety of exchanges.',
+    description='An asynchronous program for managing cryptocurrency trading on a variety of exchanges.',
     setup_requires=['pytest-runner'],
     install_requires=[
         'sqlalchemy>=1.0.9',

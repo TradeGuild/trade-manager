@@ -1,18 +1,28 @@
 # trade-manager
 
-A program for managing cryptocurrency trading on a variety of exchanges.
+An asynchronous program for managing cryptocurrency trading on a variety of exchanges. This program comes with a number of optional, configurable plugins.
+
+
++ [Bitfinex](https://github.com/GitGuild/bitfinex-manager/)
++ [Poloniex](https://github.com/GitGuild/poloniex-manager/)
++ [Kraken](https://github.com/GitGuild/kraken-manager/)
 
 ## Installation
 
 Just run `make install`. This will automatically install all prereqs
 including ledger-cli and sepc256k1.
 
-Also make will create a data directory for storing your logs and
-configuration files. On *nux systems, this directory will be
-`~/.tapp/trademanager`
+Also make will create data directories for storing your logs and
+configuration files. Expected to run on *nux systems, these directories will be as follows.
+
+| For           | Location               |
+|---------------|------------------------|
+| logs          | /var/log/trademanager  |
+| configuration | /etc/tapp/trademanager |
+| pids          | /var/run/              |
 
 If and when you wish to change any configuration settings, edit
-the .ini file in the data directory.
+the .ini file in the configuration directory.
 
 ## Command Line Interface (CLI)
 
@@ -21,10 +31,10 @@ via the command line. The name of the trade-manager cli is 'tradem'
 
 ``` bash
 $ tradem
-usage: tradem {ticker,ledger,order,trade,balance,address}
+usage: tradem {ticker,ledger,order,trade,balance,address,market,commodity}
 
 positional arguments:
-  {ticker,ledger,order,trade,balance,address}
+  {ticker,ledger,order,trade,balance,address,market,commodity}
                         'tradem <command> help' for usage details
 ```
 
@@ -34,11 +44,11 @@ For instance, you can create, cancel, and get orders.
 ``` bash
 $ tradem order create --help
 usage: tradem [-h]
-              {ticker,ledger,order,trade,balance,address}
+              {ticker,ledger,order,trade,balance,address,market,commodity}
               {get,sync,create,cancel} {bid,ask} amount price market exchange
 
 positional arguments:
-  {ticker,ledger,order,trade,balance,address}
+  {ticker,ledger,order,trade,balance,address,market,commodity}
                         'tradem <command> help' for usage details
   {get,sync,create,cancel}
                         Order sub-commands

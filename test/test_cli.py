@@ -5,7 +5,8 @@ from helper import TestPlugin, start_test_man, stop_test_man
 from sqlalchemy_models import get_schemas
 from test.helper import check_test_ticker
 from trade_manager.cli import handle_command
-from trade_manager.plugin import get_orders, get_trades, sync_ticker, sync_balances
+from trade_manager.plugin import get_orders, get_trades, sync_ticker, sync_balances, get_active_markets, \
+    get_preferred_exchange, set_preferred_exchange, get_commodity_config
 
 SCHEMAS = get_schemas()
 
@@ -99,3 +100,41 @@ class TestCLI(unittest.TestCase):
             time.sleep(0.1)
             ticker = handle_command(['ticker', 'get', '-e', 'helper', '-m', 'BTC_USD'], session=tp.session)
         check_test_ticker(ticker)
+
+    def test_market(self):
+        # setup
+        newmark = 'ETH_AUD'
+        handle_command(['market', 'rem', newmark, 'helper'], session=tp.session)
+        set_preferred_exchange(newmark, None)
+        # test starts
+        markets = get_active_markets(exchange='helper')
+        assert newmark not in markets
+        olen = len(markets)
+        handle_command(['market', 'add', newmark, 'helper'], session=tp.session)
+        nmarkets = get_active_markets(exchange='helper')
+        assert newmark in nmarkets
+        assert len(nmarkets) == olen + 1
+        exch = get_preferred_exchange(newmark)
+        assert exch is None
+        handle_command(['market', 'pref', newmark, 'helper'], session=tp.session)
+        exch = get_preferred_exchange(newmark)
+        assert exch == 'helper'
+        set_preferred_exchange(newmark, None)
+        handle_command(['market', 'rem', newmark, 'helper'], session=tp.session)
+        fmarkets = get_active_markets(exchange='helper')
+        assert newmark not in fmarkets
+        assert len(fmarkets) == olen
+        nexch = get_preferred_exchange(newmark)
+        assert nexch is None
+
+    def test_commodity(self):
+        weight = '1.01'
+        cfloor = '0.01'
+        ctarget = '0.1'
+        cceil = '0.25'
+        handle_command(['commodity', 'set', 'AUD', weight, cfloor, ctarget, cceil], session=tp.session)
+        conf = get_commodity_config('AUD')
+        assert conf['weight'] == weight
+        assert conf['floor'] == cfloor
+        assert conf['target'] == ctarget
+        assert conf['ceil'] == cceil
