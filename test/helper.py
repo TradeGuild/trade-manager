@@ -1,16 +1,39 @@
 import datetime
+import os
 import random
-import signal
 import string
+import time
 from ledger import Amount
 from ledger import Balance
 
-from daemon import runner
-from sqlalchemy_models import jsonify2
+from sqlalchemy_models import jsonify2, create_session_engine, setup_database
 from sqlalchemy_models.util import filter_query_by_attr
+from tappmq.tappmq import get_status
 
-from trade_manager import em, wm, ses
+from trade_manager import em, wm, um
 from trade_manager.plugin import ExchangePluginBase
+
+
+def start_test_man(name='helper'):
+    command = name if name != 'test' else 'helper'
+    os.system("supervisorctl -c test_supervisord.conf start %s" % command)
+    status = 'stopped'
+    countdown = 100  # 10 seconds
+    while status != 'running' and countdown > 0:
+        countdown -= 1
+        status = get_status(name)
+        time.sleep(0.01)
+
+
+def stop_test_man(name='helper'):
+    command = name if name != 'test' else 'helper'
+    os.system("supervisorctl -c test_supervisord.conf stop %s" % command)
+    status = 'running'
+    countdown = 100  # 10 seconds
+    while status != 'stopped' and countdown > 0:
+        countdown -= 1
+        status = get_status(name)
+        time.sleep(0.01)
 
 
 def make_base_id(l=10):
@@ -24,7 +47,7 @@ class TestPlugin(ExchangePluginBase):
     """
     An Exchange Plugin for testing purposes only. Fakes all data.
     """
-    NAME = 'Test'
+    NAME = 'Helper'
     _user = None
     session = None
 
@@ -47,7 +70,7 @@ class TestPlugin(ExchangePluginBase):
         """
         pass
 
-    def cancel_orders(self, oid=None, order_id=None, side=None, market=None):
+    def cancel_orders(self, oid=None, order_id=None, side=None, market=None, price=None):
         """
         Cancel all orders, or optionally just those matching the parameters.
         :return: True if orders were successfully canceled or no orders exist,
@@ -58,15 +81,26 @@ class TestPlugin(ExchangePluginBase):
             .filter(em.LimitOrder.state != 'closed')
         order_id = order_id if order_id is None or ("|" in str(order_id)) \
             else '%s|%s' % (self.NAME.lower(), order_id)
+        self.logger.debug(order_id)
+        if order_id:
+            assert "|" in order_id
         query = filter_query_by_attr(query, em.LimitOrder, 'id', oid)
         query = filter_query_by_attr(query, em.LimitOrder, 'order_id', order_id)
         query = filter_query_by_attr(query, em.LimitOrder, 'side', side)
         query = filter_query_by_attr(query, em.LimitOrder, 'market', market)
+        # TODO filter by price if side present
         for order in query:
             if side is not None:
                 assert order.side == side
             order.state = 'closed'
-        self.session.commit()
+            self.logger.debug("order closed %s: %s" % (order.id, order))
+            # self.session.add(order)
+        try:
+            self.session.commit()
+        except Exception as e:
+            self.logger.exception(e)
+            self.session.rollback()
+            self.session.flush()
 
     def create_order(self, oid):
         """
@@ -75,8 +109,20 @@ class TestPlugin(ExchangePluginBase):
         :return: The unique order id given by the exchange
         :rtype: str
         """
-        order = self.session.query(em.LimitOrder).filter(em.LimitOrder.id == oid).one_or_none()
-        order.load_commodities()
+        order = self.session.query(em.LimitOrder).filter(em.LimitOrder.id == oid).first()
+        # self.logger.debug("order %s: %s" % (order.id, order))
+        if order is not None:
+            order.state = 'open'
+            order.order_id = "%s|%s" % (order.exchange, order.order_id.split("|")[1])
+            self.logger.debug("created order %s: %s" % (order.id, order))
+            self.session.add(order)
+            try:
+                self.session.commit()
+            except Exception as e:
+                self.logger.exception(e)
+                self.session.rollback()
+                self.session.flush()
+            order.load_commodities()
         return order
 
     def sync_orders(self, market=None):
@@ -88,20 +134,28 @@ class TestPlugin(ExchangePluginBase):
         :return:  a list of open orders as Order objects.
         :rtype: list
         """
+        self.logger.debug("sync orders w market %s" % market)
         oorders = self.session.query(em.LimitOrder).filter(em.LimitOrder.exchange == self.NAME.lower()) \
             .filter(em.LimitOrder.state == 'open')
         oorders = filter_query_by_attr(oorders, em.LimitOrder, 'market', market)
         for oorder in oorders:
+            self.logger.debug("closed order %s" % oorder.id)
             oorder.state = 'closed'
             self.session.add(oorder)
         porders = self.session.query(em.LimitOrder).filter(em.LimitOrder.exchange == self.NAME.lower()) \
             .filter(em.LimitOrder.state == 'pending')
         porders = filter_query_by_attr(porders, em.LimitOrder, 'market', market)
         for porder in porders:
+            self.logger.debug("opened order %s" % porder.id)
             porder.state = 'open'
             porder.order_id = porder.order_id.replace("tmp", self.NAME.lower())
             self.session.add(porder)
-        self.session.commit()
+        try:
+            self.session.commit()
+        except Exception as e:
+            self.logger.exception(e)
+            self.session.rollback()
+            self.session.flush()
 
     def sync_balances(self):
         """
@@ -129,46 +183,65 @@ class TestPlugin(ExchangePluginBase):
         :rtype: Ticker
         """
         tick = em.Ticker(99, 101, 110, 90, 1000,
-                         100, market, 'test')
+                         100, market, 'helper')
         jtick = jsonify2(tick, 'Ticker')
         self.red.set('%s_%s_ticker' % (self.NAME.lower(), market), jtick)
 
-    def sync_trades(self):
+    def sync_trades(self, rescan=False):
         """
         :return: a list of trades, possibly only a subset of them.
         """
         trade = em.Trade(make_base_id(), self.NAME.lower(), 'BTC_USD', 'buy',  0.01, 100, 0, 'quote')
-        print trade
+        # self.logger.debug("trade: %s" % trade)
         self.session.add(trade)
         self.session.commit()
 
-    def sync_credits(self):
+    def sync_credits(self, rescan=False):
         """
         :return: a list of credits, possibly only a subset of them.
         """
-        credit = wm.Credit(1, make_base_id(10), 'BTC', 'Bitcoin', 'unconfirmed', "test", make_base_id(10),
+        credit = wm.Credit(1, make_base_id(10), 'BTC', 'helper', 'unconfirmed', 'helper', make_base_id(10),
                            self.manager_user.id, time=datetime.datetime.utcnow())
-        print credit
+        # self.logger.debug("credit: %s" % credit)
         self.session.add(credit)
         self.session.commit()
 
-    def sync_debits(self):
+    def sync_debits(self, rescan=False):
         """
         :return: a list of debits, possibly only a subset of them.
         """
-        debit = wm.Debit(1, 0, make_base_id(10), 'BTC', 'Bitcoin', 'unconfirmed', "test", make_base_id(10),
+        debit = wm.Debit(1, 0, make_base_id(10), 'BTC', 'helper', 'unconfirmed', 'helper', make_base_id(10),
                          self.manager_user.id, time=datetime.datetime.utcnow())
-        print debit
+        # self.logger.debug("debit: %s" % debit)
         self.session.add(debit)
         self.session.commit()
 
 
 def main():
-    tp = TestPlugin(session=ses)
-    daemon_runner = runner.DaemonRunner(tp)
-    daemon_runner.daemon_context.signal_map[signal.SIGTERM] = tp.terminate
-    daemon_runner.do_action()
+    tp = TestPlugin()
+    tp.run()
 
 
 if __name__ == "__main__":
     main()
+
+
+def check_test_ticker(ticker, market='BTC_USD'):
+    base, quote = market.split("_")
+    assert hasattr(ticker, 'bid')
+    assert isinstance(ticker.bid, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'ask')
+    assert isinstance(ticker.ask, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'high')
+    assert isinstance(ticker.high, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'low')
+    assert isinstance(ticker.low, Amount)
+    assert str(ticker.bid.commodity) == quote
+    assert hasattr(ticker, 'volume')
+    assert isinstance(ticker.volume, Amount)
+    assert str(ticker.volume.commodity) == base
+    assert hasattr(ticker, 'market')
+    assert ticker.market == market

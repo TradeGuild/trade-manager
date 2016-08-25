@@ -8,7 +8,7 @@ classifiers = [
 
 setup(
     name='trade_manager',
-    version='0.0.4',
+    version='0.0.5.2',
     packages=['trade_manager'],
     url='https://github.com/gitguild/trade-manager',
     license='MIT',
@@ -19,10 +19,16 @@ setup(
     setup_requires=['pytest-runner'],
     install_requires=[
         'sqlalchemy>=1.0.9',
-        'hashlib', 'jsonschema',
+        'psycopg2',
+        'hashlib',
+        'jsonschema',
         'alchemyjsonschema',
         'redis',
-        'python-daemon'
+        'supervisor',
+        'secp256k1',
+        'cffi',
+        'tappmq',
+        'sqlalchemy_models'
         # 'secp256k1==0.11'#,
         # "bitjws==0.6.3.1",
         # "flask>=0.10.0",

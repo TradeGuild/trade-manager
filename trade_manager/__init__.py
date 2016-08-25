@@ -9,3 +9,4 @@ ses, eng = create_session_engine(cfg=CFG)
 setup_database(eng, modules=[wm, em, um])
 
 NETWORK_COMMODITY_MAP = {'BTC': 'Bitcoin', 'DASH': 'Dash', 'ETH': 'Ethereum', 'LTC': 'Litecoin'}
+EXCHANGES = ['kraken', 'bitfinex', 'poloniex']
